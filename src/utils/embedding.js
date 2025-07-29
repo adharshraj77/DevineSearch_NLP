@@ -1,40 +1,81 @@
 // utils/embedding.js
-import axios from 'axios';
+import embeddingsUrl from '../src/data/bible_embeddings.json?url';
 
-const API_URL = 'https://router.huggingface.co/hf-inference/models/sentence-transformers/all-mpnet-base-v2/pipeline/sentence-similarity';
+// Cache system
+let embeddingsCache = null;
+let verseMap = new Map(); // Maps references to embeddings
 
-export async function getQueryEmbedding(query, verses) {
-  if (!query?.trim()) throw new Error('Empty query');
+async function loadEmbeddings() {
+  if (embeddingsCache) return { embeddings: embeddingsCache, verseMap };
 
   try {
-    const response = await axios.post(
-      API_URL,
-      {
-        inputs: {
-          source_sentence: query,
-          sentences: verses.map(v => v.verse), // extract only the verse text
-        },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${import.meta.env.VITE_HF_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 2000000,
-      }
-    );
-
-    if (!Array.isArray(response.data)) {
-      throw new Error('Invalid response from Hugging Face');
-    }
-
-    return response.data; // array of similarity scores
-  } catch (error) {
-    console.error('❌ HuggingFace API Error:', {
-      status: error.response?.status,
-      error: error.response?.data?.error || error.message,
-      query,
+    const response = await fetch(embeddingsUrl);
+    const data = await response.json();
+    
+    // Create lookup map
+    data.forEach(item => {
+      verseMap.set(item.reference, item.embedding);
     });
-    throw new Error('Embedding failed: ' + (error.response?.data?.error || error.message));
+    
+    embeddingsCache = data;
+    return { embeddings: data, verseMap };
+  } catch (error) {
+    console.error('Failed to load embeddings:', error);
+    throw new Error('Embedding data load failed');
   }
+}
+
+// Pre-computed norm for each embedding
+const normCache = new Map();
+
+function getNorm(embedding) {
+  if (normCache.has(embedding)) return normCache.get(embedding);
+  const norm = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
+  normCache.set(embedding, norm);
+  return norm;
+}
+
+export async function getSimilarVerses(queryEmbedding, verseReferences, options = {}) {
+  const { threshold = 0.3, topN = 5 } = options;
+  
+  try {
+    const { verseMap } = await loadEmbeddings();
+    const queryNorm = getNorm(queryEmbedding);
+    
+    const results = [];
+    
+    // Calculate similarity for each verse
+    for (const ref of verseReferences) {
+      const verseEmbedding = verseMap.get(ref);
+      if (!verseEmbedding) continue;
+      
+      const verseNorm = getNorm(verseEmbedding);
+      let dotProduct = 0;
+      
+      for (let i = 0; i < queryEmbedding.length; i++) {
+        dotProduct += queryEmbedding[i] * verseEmbedding[i];
+      }
+      
+      const similarity = dotProduct / (queryNorm * verseNorm);
+      if (similarity >= threshold) {
+        results.push({ reference: ref, similarity });
+      }
+    }
+    
+    // Sort and limit results
+    return results
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, topN);
+      
+  } catch (error) {
+    console.error('Similarity calculation failed:', error);
+    throw error;
+  }
+}
+
+// Utility to find most similar verses to a query
+export async function findMostSimilarVerses(queryEmbedding, options) {
+  const { embeddings } = await loadEmbeddings();
+  const allReferences = embeddings.map(item => item.reference);
+  return getSimilarVerses(queryEmbedding, allReferences, options);
 }
