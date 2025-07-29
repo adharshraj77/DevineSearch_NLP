@@ -7,4 +7,14 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  build: {
+    chunkSizeWarningLimit: 3000, // Increase from default 500KB
+    assetsInlineLimit: 0, // Disable inlining of assets
+  },
+  server: {
+    fs: {
+      // Allow serving files from the project root
+      allow: ['..']
+    }
+  }
 });
