@@ -8,7 +8,7 @@ export default defineConfig({
     exclude: ['lucide-react'],
   },
   build: {
-    chunkSizeWarningLimit: 3000, // Increase from default 500KB
+    chunkSizeWarningLimit: 300000, // Increase from default 500KB
     assetsInlineLimit: 0, // Disable inlining of assets
   },
   server: {
